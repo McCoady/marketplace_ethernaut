@@ -2,7 +2,8 @@
 pragma solidity 0.8.17;
 
 import "openzeppelin-contracts/utils/cryptography/SignatureChecker.sol";
-import "openzeppelin-contracts/access/Ownable.sol";
+import "openzeppelin-contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "openzeppelin-contracts-upgradeable/proxy/utils/Initializable.sol";
 import "openzeppelin-contracts/utils/introspection/IERC165.sol";
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
 import "openzeppelin-contracts/token/ERC721/IERC721.sol";
@@ -17,16 +18,23 @@ struct Item {
     address paymentToken;
 }
 
-contract Marketplace is Ownable {
+contract Marketplace is Initializable, OwnableUpgradeable {
     error WrongPrice();
     error Expired();
     error InvalidSignature();
     error EtherSendFail();
     error ERC20NotWhitelisted();
     error UsedSignature();
+    error ZeroAddress();
 
     mapping(address => bool) public whitelistedERC20;
     mapping(bytes => bool) public usedSig;
+
+    function initialize(address _owner) public initializer {
+        if (_owner == address(0)) revert ZeroAddress();
+        __Ownable_init();
+        transferOwnership(_owner);
+    }
 
     function purchaseWithEth(
         Item calldata _item,

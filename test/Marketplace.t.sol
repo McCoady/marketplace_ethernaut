@@ -19,6 +19,8 @@ contract ContractTest is Test, ERC721TokenReceiver, ERC1155TokenReceiver {
 
     function setUp() public {
         mrkt = new Marketplace();
+        mrkt.initialize(address(this));
+        console.logAddress(mrkt.owner());
         whitelistedToken20 = new TestERC20(testUserTwo);
         whitelistedToken20 = new TestERC20(testUserTwo);
         token721 = new TestERC721(testUserOne);
@@ -129,6 +131,37 @@ contract ContractTest is Test, ERC721TokenReceiver, ERC1155TokenReceiver {
 
         vm.expectRevert(Marketplace.UsedSignature.selector);
         mrkt.purchaseWithEth{value: 1 ether}(_testItem, signature);
+    }
+
+    function testCannotPurchaseUnlistedToken() public {
+        setAllowanceERC721(testUserOne);
+        token721.mintTokens(testUserOne);
+        assertEq(token721.ownerOf(1), testUserOne);
+
+
+        Item memory _testItem = Item(
+            address(token721),
+            0,
+            1 ether,
+            block.timestamp + 1000,
+            testUserOne,
+            address(0)
+        );
+
+        Item memory _testWrongItem = Item(
+            address(token721),
+            1,
+            1 ether,
+            block.timestamp + 1000,
+            testUserOne,
+            address(0)
+        );
+
+        bytes32 hashedMsg = getEthSignedMessage(_testItem);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, hashedMsg);
+        bytes memory signature = abi.encodePacked(r, s, v);
+        vm.expectRevert(Marketplace.InvalidSignature.selector);
+        mrkt.purchaseWithEth{value: 1 ether}(_testWrongItem, signature);
     }
 
     function testCannotPurchaseWrongPrice() public {
