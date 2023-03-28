@@ -3,6 +3,7 @@ pragma solidity 0.8.17;
 
 import "openzeppelin-contracts/utils/cryptography/SignatureChecker.sol";
 import "openzeppelin-contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "openzeppelin-contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "openzeppelin-contracts-upgradeable/proxy/utils/Initializable.sol";
 import "openzeppelin-contracts/utils/introspection/IERC165.sol";
 import "openzeppelin-contracts/token/ERC20/IERC20.sol";
@@ -18,14 +19,20 @@ struct Item {
     address paymentToken;
 }
 
-contract Marketplace is Initializable, OwnableUpgradeable {
-    error WrongPrice();
-    error Expired();
-    error InvalidSignature();
+contract Marketplace is Initializable, OwnableUpgradeable, ReentrancyGuardUpgradeable {    
     error EtherSendFail();
     error ERC20NotWhitelisted();
-    error UsedSignature();
+    error Expired();
+    error InvalidSignature();
+    error UsedSignature();   
+    error WrongPrice();
+    error WrongSender();
     error ZeroAddress();
+
+    event BidAccepted(address indexed buyer, address indexed seller, Item purchasedItem);
+    event BidCancelled(address indexed bidder, Item bidItem);
+    event ListingCancelled(address indexed owner, Item listedItem);
+    event TokenPurchased(address indexed buyer, address indexed seller, Item purchasedItem);
 
     mapping(address => bool) public whitelistedERC20;
     mapping(bytes => bool) public usedSig;
@@ -33,13 +40,14 @@ contract Marketplace is Initializable, OwnableUpgradeable {
     function initialize(address _owner) public initializer {
         if (_owner == address(0)) revert ZeroAddress();
         __Ownable_init();
+        __ReentrancyGuard_init();
         transferOwnership(_owner);
     }
 
     function purchaseWithEth(
         Item calldata _item,
         bytes calldata signature
-    ) external payable {
+    ) external payable nonReentrant {
         if (msg.value != _item.price) revert WrongPrice();
         if (block.timestamp > _item.expiry) revert Expired();
         if (usedSig[signature]) revert UsedSignature();
@@ -47,11 +55,12 @@ contract Marketplace is Initializable, OwnableUpgradeable {
         bool validSig = checkSignature(_item, signature);
         if (!validSig) revert InvalidSignature();
 
-        (bool sent, ) = _item.signer.call{value: msg.value}("");
-        if (!sent) revert EtherSendFail();
-
         usedSig[signature] = true;
-        if (IERC165(_item.collection).supportsInterface(0xd9b67a26)) {
+
+        bytes4 ERC1155Interface = 0xd9b67a26;
+        bytes4 ERC721Interface = 0x80ac58cd;
+
+        if (IERC165(_item.collection).supportsInterface(ERC1155Interface)) {
             IERC1155(_item.collection).safeTransferFrom(
                 _item.signer,
                 msg.sender,
@@ -59,16 +68,20 @@ contract Marketplace is Initializable, OwnableUpgradeable {
                 1,
                 ""
             );
-        } else if (IERC165(_item.collection).supportsInterface(0x80ac58cd)) {
+        } else if (IERC165(_item.collection).supportsInterface(ERC721Interface)) {
             IERC721(_item.collection).safeTransferFrom(
                 _item.signer,
                 msg.sender,
                 _item.tokenId
             );
         }
+        (bool sent, ) = _item.signer.call{value: msg.value}("");
+        if (!sent) revert EtherSendFail();
+
+        emit TokenPurchased(msg.sender, _item.signer, _item);
     }
 
-    function acceptBid(Item calldata _item, bytes calldata signature) external {
+    function acceptBid(Item calldata _item, bytes calldata signature) external nonReentrant {
         if (block.timestamp > _item.expiry) revert Expired();
         if (usedSig[signature]) revert UsedSignature();
         bool validSig = checkSignature(_item, signature);
@@ -97,9 +110,29 @@ contract Marketplace is Initializable, OwnableUpgradeable {
             _item.price
         );
 
-        // check signature valid
-        // transfer funds to seller (end bid validity?)
-        // transfer token to owner
+        emit BidAccepted(_item.signer, msg.sender, _item);
+    }
+
+    function cancelListing(Item calldata _item, bytes calldata signature) external {
+        if (msg.sender != _item.signer) revert WrongSender();
+        if (block.timestamp > _item.expiry) revert Expired();
+        bool validSig = checkSignature(_item, signature);
+        if (!validSig) revert InvalidSignature();
+        if (usedSig[signature]) revert UsedSignature();
+
+        usedSig[signature] = true;
+        emit ListingCancelled(msg.sender, _item);
+    }
+
+    function cancelBid(Item calldata _item, bytes calldata signature) external {
+        if (msg.sender != _item.signer) revert WrongSender();
+        if (block.timestamp > _item.expiry) revert Expired();
+        bool validSig = checkSignature(_item, signature);
+        if (!validSig) revert InvalidSignature();
+        if (usedSig[signature]) revert UsedSignature();
+
+        usedSig[signature] = true;
+        emit BidCancelled(msg.sender, _item);
     }
 
     function whitelistERC20(address _tokenAddress) external onlyOwner {

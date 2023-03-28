@@ -403,6 +403,98 @@ contract ContractTest is Test, ERC721TokenReceiver, ERC1155TokenReceiver {
         assertEq(token721.ownerOf(0), testUserTwo);
     }
 
+    function testCancelListing() public {
+        // set marketplace allowance of ERC721 token for testUserOne
+        setAllowanceERC721(testUserOne);
+        //create bid from test address
+        Item memory _testItem = Item(
+            address(token721),
+            0,
+            1 ether,
+            block.timestamp + 1000,
+            testUserOne,
+            address(whitelistedToken20)
+        );
+
+        bytes memory signature = buildSignature(_testItem, 1);
+
+        startHoax(testUserOne);
+        mrkt.cancelListing(_testItem, signature);
+        vm.stopPrank();
+        startHoax(testUserTwo);
+        vm.expectRevert(Marketplace.UsedSignature.selector);
+        mrkt.purchaseWithEth{value: 1 ether}(_testItem,signature);
+    }
+
+    function testCancelBid() public {
+        Item memory _testItem = Item(
+            address(token721),
+            0,
+            1 ether,
+            block.timestamp + 1000,
+            testUserOne,
+            address(whitelistedToken20)
+        );
+
+        bytes memory signature = buildSignature(_testItem, 1);
+        
+        startHoax(testUserOne);
+        mrkt.cancelBid(_testItem, signature);
+        vm.stopPrank();
+        
+        setAllowanceERC721(testUserOne);
+        startHoax(testUserTwo);
+        vm.expectRevert(Marketplace.UsedSignature.selector);
+        mrkt.acceptBid(_testItem,signature);
+    }
+
+    function testRevertCancelAcceptedBid() public {
+        setAllowanceERC20(testUserTwo);
+
+        Item memory _testItem = Item(
+            address(token721),
+            0,
+            1 ether,
+            block.timestamp + 1000,
+            testUserTwo,
+            address(whitelistedToken20)
+        );
+
+        bytes memory signature = buildSignature(_testItem, 2);
+
+        setAllowanceERC721(testUserOne);
+        startHoax(testUserOne);
+        mrkt.acceptBid(_testItem,signature);
+        vm.stopPrank();
+
+        startHoax(testUserTwo);
+        vm.expectRevert(Marketplace.UsedSignature.selector);
+        mrkt.cancelBid(_testItem, signature);
+    }
+
+    function testRevertCancelAcceptedListing() public {
+        setAllowanceERC721(testUserOne);
+
+        Item memory _testItem = Item(
+            address(token721),
+            0,
+            1 ether,
+            block.timestamp + 1000,
+            testUserOne,
+            address(whitelistedToken20)
+        );
+
+        bytes memory signature = buildSignature(_testItem, 1);
+
+        startHoax(testUserTwo);
+        mrkt.purchaseWithEth{value: 1 ether}(_testItem, signature);
+        vm.stopPrank();
+
+        startHoax(testUserOne);
+        vm.expectRevert(Marketplace.UsedSignature.selector);
+        mrkt.cancelListing(_testItem, signature);
+    }
+
     // Helper functions
 
     function getEthSignedMessage(
